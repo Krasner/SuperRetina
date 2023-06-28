@@ -9,8 +9,8 @@ import os
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 
-from common.common_util import pre_processing
-from common.train_util import get_gaussian_kernel
+from ..common.common_util import pre_processing
+from ..common.train_util import get_gaussian_kernel
 import time
 
 class RetinaDataset(Dataset):

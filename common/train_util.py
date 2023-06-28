@@ -10,7 +10,7 @@ from torch.nn import functional as F
 import numpy as np
 import cv2
 import scipy.stats as st
-import config
+# import config
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 

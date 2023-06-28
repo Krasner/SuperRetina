@@ -5,9 +5,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from torchvision import transforms
 
-from common.common_util import pre_processing, simple_nms, remove_borders, \
+from .common.common_util import pre_processing, simple_nms, remove_borders, \
     sample_keypoint_desc
-from model.super_retina import SuperRetina
+from .common.mask_util import maskoff
+
+from .model.super_retina import SuperRetina
 
 from PIL import Image
 import os
@@ -69,7 +71,7 @@ class Predictor:
 
         return query_image, refer_image
 
-    def draw_result(self, query_image, refer_image, cv_kpts_query, cv_kpts_refer, matches, status):
+    def draw_result(self, query_image, refer_image, cv_kpts_query, cv_kpts_refer, matches, status, inlier_rate, save_path=None, save_name=None):
         def drawMatches(imageA, imageB, kpsA, kpsB, matches, status):
             # initialize the output visualization image
             (hA, wA) = imageA.shape[:2]
@@ -104,9 +106,13 @@ class Predictor:
         plt.scatter(query_np[:, 0], query_np[:, 1], s=1, c='r')
         plt.scatter(refer_np[:, 0], refer_np[:, 1], s=1, c='r')
         plt.axis('off')
-        plt.title('Match Result, #goodMatch: {}'.format(status.sum()))
+        plt.title('Match Result, #goodMatch: {nmatches}, inlier rate: {inliers:.4f}'.format(nmatches=status.sum(), inliers=inlier_rate))
         plt.imshow(cv2.cvtColor(matched_image, cv2.COLOR_BGR2RGB))
-        plt.show()
+        # plt.show()
+        if (save_path is not None) and (save_name is not None): 
+            plt.savefig(os.path.join(save_path, save_name))
+        else:
+            plt.show()
         plt.close()
 
     def model_run_pair(self, query_tensor, refer_tensor):
@@ -175,6 +181,66 @@ class Predictor:
             self.draw_result(query_image, refer_image, cv_kpts_query, cv_kpts_refer, matches, np.array(status))
         return goodMatch, cv_kpts_query, cv_kpts_refer, query_image, refer_image
 
+    def match_pair(self, 
+        query_keypoints, 
+        refer_keypoints, 
+        query_desc, 
+        refer_desc, 
+        query_image=None, 
+        refer_image=None,
+        save_path=None,
+        save_name=None,   
+    ):
+        
+        # query_keypoints, refer_keypoints = keypoints[0], keypoints[1]
+        query_desc, refer_desc = query_desc.permute(1, 0).numpy(), refer_desc.permute(1, 0).numpy()
+
+        # mapping keypoints to scaled keypoints
+        cv_kpts_query = [cv2.KeyPoint(int(i[0] / self.model_image_width * self.image_width),
+                                      int(i[1] / self.model_image_height * self.image_height), 30)
+                         for i in query_keypoints]
+        cv_kpts_refer = [cv2.KeyPoint(int(i[0] / self.model_image_width * self.image_width),
+                                      int(i[1] / self.model_image_height * self.image_height), 30)
+                         for i in refer_keypoints]
+
+        goodMatch = []
+        status = []
+        matches = []
+        try:
+            matches = self.knn_matcher.knnMatch(query_desc, refer_desc, k=2)
+            for m, n in matches:
+                if m.distance < self.knn_thresh * n.distance:
+                    goodMatch.append(m)
+                    status.append(True)
+                else:
+                    status.append(False)
+        except Exception:
+            pass
+
+        # filter inliers with homography
+        H_m = None
+        inliers_num_rate = 0
+
+        if len(goodMatch) >= 4:
+            src_pts = [cv_kpts_query[m.queryIdx].pt for m in goodMatch]
+            src_pts = np.float32(src_pts).reshape(-1, 1, 2)
+            dst_pts = [cv_kpts_refer[m.trainIdx].pt for m in goodMatch]
+            dst_pts = np.float32(dst_pts).reshape(-1, 1, 2)
+
+            H_m, mask = cv2.findHomography(src_pts, dst_pts, cv2.LMEDS)
+
+            # src_pts = src_pts[mask.ravel() == 1]
+            # dst_pts = dst_pts[mask.ravel() == 1]
+
+            goodMatch = np.array(goodMatch)[mask.ravel() == 1]
+            inliers_num_rate = mask.sum() / len(mask.ravel())
+
+        # return H_m, inliers_num
+        if (query_image is not None) and (refer_image is not None):
+            self.draw_result(query_image, refer_image, cv_kpts_query, cv_kpts_refer, matches, np.array(status), inliers_num_rate, save_path, save_name)
+
+        return goodMatch, inliers_num_rate
+
     def compute_homography(self, query_path, refer_path, query_is_image=False):
         goodMatch, cv_kpts_query, cv_kpts_refer, raw_query_image, raw_refer_image = \
             self.match(query_path, refer_path, query_is_image=query_is_image)
@@ -227,8 +293,12 @@ class Predictor:
 
         print("Matched Failed!")
 
-    def model_run_one_image(self, image_path, save_path=None):
+    def model_run_one_image(self, image_path, save_path=None, compute_mask=False):
+
         image = cv2.imread(image_path, cv2.IMREAD_COLOR)
+        if compute_mask:
+            image, mask = maskoff(image, return_mask=True)
+
         image = image[:, :, 1]
         self.image_height, self.image_width = image.shape[:2]
 
@@ -257,16 +327,26 @@ class Predictor:
             for k, s in zip(keypoints, scores)]))
 
         keypoints = [torch.flip(k, [1]).float().data for k in keypoints]
+        scores = [s.float().data for s in scores]
 
         descriptors = [sample_keypoint_desc(k[None], d[None], 8)[0].cpu()
                        for k, d in zip(keypoints, descriptor_pred)]
         keypoints = [k.cpu() for k in keypoints]
+        scores = [s.cpu() for s in scores]
 
         if save_path is not None:
             save_info = {'kp': keypoints[0].cpu(), 'desc': descriptors[0].cpu()}
             torch.save(save_info, save_path)
 
-        return keypoints[0], descriptors[0]
+        cv_kpts = [cv2.KeyPoint(int(i[0] / self.model_image_width * self.image_width),
+                                      int(i[1] / self.model_image_height * self.image_height), 30)
+                         for i in keypoints[0]]
+        
+        rets = [keypoints[0], descriptors[0], scores[0], cv_kpts, (image * 255).astype(np.uint8)]
+        if compute_mask:
+            rets.append(mask.astype(np.uint8))
+
+        return rets 
 
     def homography_from_tensor(self, query_info, refer_info):
         query_keypoints, query_desc = query_info['kp'], query_info['desc']

@@ -2,7 +2,10 @@ import matplotlib.pyplot as plt
 import torch
 from torch.nn import functional as F
 
-from ..common.common_util import sample_keypoint_desc, nms
+import sys
+sys.path.append("..")
+
+from common.common_util import sample_keypoint_desc, nms
 from .record_module import update_value_map
 
 

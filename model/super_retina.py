@@ -8,12 +8,15 @@ from torch.nn import functional as F
 import torch
 import torch.nn as nn
 
-from ..loss.dice_loss import DiceBCELoss, DiceLoss
-from ..loss.triplet_loss import triplet_margin_loss_gor, triplet_margin_loss_gor_one, sos_reg
+import sys
+sys.path.append("..")
 
-from ..common.common_util import remove_borders, sample_keypoint_desc, simple_nms, nms, \
+from loss.dice_loss import DiceBCELoss, DiceLoss
+from loss.triplet_loss import triplet_margin_loss_gor, triplet_margin_loss_gor_one, sos_reg
+
+from common.common_util import remove_borders, sample_keypoint_desc, simple_nms, nms, \
     sample_descriptors
-from ..common.train_util import get_gaussian_kernel, affine_images
+from common.train_util import get_gaussian_kernel, affine_images
 
 
 def double_conv(in_channels, out_channels):

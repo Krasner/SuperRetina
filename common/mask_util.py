@@ -3,6 +3,27 @@ from typing import Any, Dict, Optional, Tuple, Union
 import cv2
 import numpy as np
 
+def crop_to_mask(img, mask, square_pad=True):
+    cols = np.nonzero(np.max(mask[..., 0], 0))[0]
+    rows = np.nonzero(np.max(mask[..., 0], 1))[0]
+
+    h = rows[-1] - rows[0]
+    w = cols[-1] - cols[0]
+
+    d = w - h
+    _d = np.abs(d)
+
+    img = img[rows[0] : rows[-1], cols[0] : cols[-1]]
+    mask = mask[rows[0] : rows[-1], cols[0] : cols[-1]]
+
+    if d > 0:
+        img = np.pad(img, ((_d // 2, _d - _d // 2), (0, 0), (0, 0)))
+        mask = np.pad(mask, ((_d // 2, _d - _d // 2), (0, 0), (0, 0)))
+    elif d < 0:
+        img = np.pad(img, ((0, 0), (_d // 2, _d - _d // 2), (0, 0)))
+        mask = np.pad(mask, ((0, 0), (_d // 2, _d - _d // 2), (0, 0)))
+    return img, mask
+
 def maskoff(img, blur=(5,5), threshold=10, mask_mode="exact", return_mask=False):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, blur, 0)

@@ -7,7 +7,7 @@ from torchvision import transforms
 
 from .common.common_util import pre_processing, simple_nms, remove_borders, \
     sample_keypoint_desc
-from .common.mask_util import maskoff
+from .common.mask_util import maskoff, crop_to_mask
 
 from .model.super_retina import SuperRetina
 
@@ -35,7 +35,7 @@ class Predictor:
         self.model_image_width = predict_config['model_image_width']
         self.model_image_height = predict_config['model_image_height']
 
-        checkpoint = torch.load(model_save_path, map_location=device)
+        checkpoint = torch.load(model_save_path, map_location=device, weights_only=False)
         model = SuperRetina()
         model.load_state_dict(checkpoint['net'])
         model.to(device)
@@ -293,12 +293,14 @@ class Predictor:
 
         print("Matched Failed!")
 
-    def model_run_one_image(self, image_path, save_path=None, compute_mask=False):
+    def model_run_one_image(self, image_path, save_path=None, compute_mask=False, return_dense_descriptors=False):
 
         image = cv2.imread(image_path, cv2.IMREAD_COLOR)
         if compute_mask:
             image, mask = maskoff(image, return_mask=True)
+            image, mask = crop_to_mask(image, mask)
 
+        rgb = image.copy()
         image = image[:, :, 1]
         self.image_height, self.image_width = image.shape[:2]
 
@@ -342,9 +344,18 @@ class Predictor:
                                       int(i[1] / self.model_image_height * self.image_height), 30)
                          for i in keypoints[0]]
         
-        rets = [keypoints[0], descriptors[0], scores[0], cv_kpts, (image * 255).astype(np.uint8)]
+        rets = [keypoints[0], descriptors[0], scores[0], cv_kpts, rgb] # (image * 255).astype(np.uint8)]
         if compute_mask:
             rets.append(mask.astype(np.uint8))
+        # breakpoint()
+        if return_dense_descriptors:
+            rets.append(descriptor_pred[0].detach().cpu())
+            # rets.append(
+            #     torch.nn.functional.interpolate(
+            #         descriptor_pred.detach().cpu(),
+            #         scale_factor=self.image_width / self.model_image_width
+            #     )[0]
+            # )
 
         return rets 
 

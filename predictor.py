@@ -190,17 +190,27 @@ class Predictor:
         refer_image=None,
         save_path=None,
         save_name=None,   
+        query_shape=None,
+        refer_shape=None,
     ):
         
         # query_keypoints, refer_keypoints = keypoints[0], keypoints[1]
         query_desc, refer_desc = query_desc.permute(1, 0).numpy(), refer_desc.permute(1, 0).numpy()
 
+        # Keypoints are in model space, so each one scales back by its OWN image size --
+        # self.image_* only describes whichever image ran through the model last, which is
+        # the wrong frame for keypoints loaded from disk and for any pair of unequal size.
+        query_height, query_width = query_shape if query_shape is not None \
+            else (self.image_height, self.image_width)
+        refer_height, refer_width = refer_shape if refer_shape is not None \
+            else (self.image_height, self.image_width)
+
         # mapping keypoints to scaled keypoints
-        cv_kpts_query = [cv2.KeyPoint(int(i[0] / self.model_image_width * self.image_width),
-                                      int(i[1] / self.model_image_height * self.image_height), 30)
+        cv_kpts_query = [cv2.KeyPoint(int(i[0] / self.model_image_width * query_width),
+                                      int(i[1] / self.model_image_height * query_height), 30)
                          for i in query_keypoints]
-        cv_kpts_refer = [cv2.KeyPoint(int(i[0] / self.model_image_width * self.image_width),
-                                      int(i[1] / self.model_image_height * self.image_height), 30)
+        cv_kpts_refer = [cv2.KeyPoint(int(i[0] / self.model_image_width * refer_width),
+                                      int(i[1] / self.model_image_height * refer_height), 30)
                          for i in refer_keypoints]
 
         goodMatch = []
@@ -235,11 +245,10 @@ class Predictor:
             goodMatch = np.array(goodMatch)[mask.ravel() == 1]
             inliers_num_rate = mask.sum() / len(mask.ravel())
 
-        # return H_m, inliers_num
         if (query_image is not None) and (refer_image is not None):
             self.draw_result(query_image, refer_image, cv_kpts_query, cv_kpts_refer, matches, np.array(status), inliers_num_rate, save_path, save_name)
 
-        return goodMatch, inliers_num_rate
+        return H_m, goodMatch, inliers_num_rate
 
     def compute_homography(self, query_path, refer_path, query_is_image=False):
         goodMatch, cv_kpts_query, cv_kpts_refer, raw_query_image, raw_refer_image = \
